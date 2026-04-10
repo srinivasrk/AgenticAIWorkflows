@@ -13,6 +13,8 @@ AgenticAIWorkflows/
 │   │   └── evaluator_optimizer_workflow.ipynb   # Cross-evaluation (Gemini + Ollama)
 │   ├── threeAgentDebateLangGraph/
 │   │   └── three_agent_debate.ipynb             # LangGraph routing + moderated debate
+│   ├── orchastratorWorkerPattern/
+│   │   └── orchastrator_worker_pattern.ipynb    # Orchestrator + parallel workers + aggregator
 │   └── humanInTheLoop/
 │       └── human_in_the_loop.ipynb                # (placeholder / work in progress)
 ├── pyproject.toml
@@ -42,8 +44,9 @@ AgenticAIWorkflows/
 
    | Variable | Used by | Purpose |
    |----------|---------|---------|
-   | `GEMINI_API_KEY` | Debate notebook, optional for Gemini in evaluator | Google AI Studio API key |
-   | `GEMINI_MODEL` | Debate notebook | Model id (e.g. `gemini-2.0-flash`); `models/` prefix is normalized in code where needed |
+   | `GEMINI_API_KEY` | Debate notebook, orchestrator–worker notebook, optional for Gemini in evaluator | Google AI Studio API key |
+   | `GEMINI_MODEL` | Debate notebook, orchestrator–worker notebook | Model id (e.g. `gemini-2.0-flash`); `models/` prefix is normalized in code where needed |
+   | `SERPER_API_KEY` | Orchestrator–worker notebook | [Serper.dev](https://serper.dev) key for `GoogleSerperAPIWrapper` search tool |
    | `GEMINI_BASE_URL` | Evaluator notebook (OpenAI-compatible Gemini) | Default points at Google’s OpenAI-compatible endpoint |
    | `OLLAMA_MODEL` | Evaluator notebook | Local model name (e.g. `llama3.2`) |
 
@@ -114,6 +117,46 @@ That is the **routing pattern** in graph form: the moderator (and opening-round 
 
 ---
 
+### Orchestrator–worker (fan-out, parallel specialists, fan-in)
+
+**Idea:** A central **orchestrator** handles intake (and optionally tools such as search), then **fans out** work to **workers** that run in **parallel**—each with its own prompt or specialty. A final **aggregator** (or summarizer) **fans in** partial results into one deliverable.
+
+**This repo — orchestrator–worker notebook:** Uses **LangGraph** `StateGraph` with one orchestrator node, **three parallel writer** nodes (summary, body, conclusion), and an **aggregator** node that merges sections into `final_report`. The orchestrator binds **Google Serper** as a tool for research-style calls.
+
+**Contrast with routing:** The graph’s **shape** is mostly fixed (static edges); parallelism comes from **multiple edges** leaving the orchestrator, not from dynamic `goto` at each step.
+
+**When to use:** Independent subtasks (different sections, modalities, or domains), faster wall-clock time when workers do not depend on each other, and when you want to tune or swap **one** specialist without touching the whole pipeline.
+
+---
+
+### Hierarchical decomposition (delegate, wait, continue)
+
+**Idea:** Some goals are too large or too tool-heavy for a single agent context window—or you want a clean separation of concerns. A **parent** agent **breaks** the work into sub-tasks, **delegates** them to **children** (other agents, sub-graphs, or wrapped tool chains), **waits** for bounded results, then **resumes** its own reasoning with those results in context. The parent keeps the overarching thread (for example outline, voice, and final integration) while specialists own narrow slices (for example retrieval and condensation).
+
+**Contrast with routing:** **Routing** is mainly about **which branch or node runs next** from a set of alternatives. **Hierarchical decomposition** is about **depth**: the parent may hand off **only part** of the task, **synchronize** on the child’s output, and **continue** planning or writing—rather than treating the child as one of several equal “next steps” in a flat graph.
+
+**Example (conceptual):** A **`ReportWriter`** does not run web queries itself. It delegates research to a **`ResearchAssistant`**, which orchestrates **`WebSearch`** and **`Summarizer`** (as tools or thin sub-agents), then returns structured notes or citations. The **`ReportWriter`** folds that material into sections, adjusts tone, and finishes the document.
+
+```mermaid
+flowchart TD
+    RW[ReportWriter<br/>parent: outline + prose]
+    RA[ResearchAssistant<br/>sub-agent: gather + condense]
+    WS[WebSearch]
+    SUM[Summarizer]
+
+    RW -->|"sub-task: research topic X;<br/>wait for structured result"| RA
+    RA --> WS
+    RA --> SUM
+    RA -->|"summaries + sources"| RW
+    RW --> RW2[Continue: draft using<br/>returned research]
+```
+
+On **GitHub**, this Mermaid block renders like the debate diagram above.
+
+**When to use:** Long reports or specs where research and writing should stay separate, different token budgets or models per sub-task, governance (only the researcher touches the network), or any workflow where the parent must **compose** child outputs rather than only **pick** the next hop.
+
+---
+
 ## Workflows
 
 ### 1. Evaluator optimizer (`evaluator_optimizer_workflow.ipynb`)
@@ -179,6 +222,26 @@ flowchart TD
 ```
 
 On **GitHub**, this Mermaid block renders in the Markdown view. In the editor, use a preview that supports Mermaid.
+
+---
+
+### 3. Orchestrator–worker — LangGraph parallel workers (`orchastrator_worker_pattern.ipynb`)
+
+| | |
+|---|---|
+| **Notebook** | [`src/orchastratorWorkerPattern/orchastrator_worker_pattern.ipynb`](src/orchastratorWorkerPattern/orchastrator_worker_pattern.ipynb) |
+| **Pattern** | **Orchestrator–worker** — fan-out to parallel specialists, fan-in aggregation |
+
+**Flow**
+
+1. **`research_assistant_agent`** — researches the topic with an LLM that can call **Serper** search.
+2. **`research_report_summary_writer`**, **`research_report_body_writer`**, **`research_report_conclusion_writer`** — three workers run **in parallel** (separate prompts).
+3. **`research_report_aggregator`** — concatenates title, summary, body, and conclusion into **`final_report`**.
+
+**Stack notes**
+
+- **`init_chat_model`** with **`google_genai`** (same env style as the debate notebook).
+- **`GoogleSerperAPIWrapper`** requires **`SERPER_API_KEY`** in `.env`.
 
 ---
 
