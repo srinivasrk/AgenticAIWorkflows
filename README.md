@@ -1,141 +1,153 @@
 # AgenticAIWorkflows
 
-A collection of agentic AI workflow notebooks in a Python **`uv`‑managed** monorepo. Each workflow illustrates a recognizable **design pattern** you can reuse in larger systems.
+Welcome. This repo is a **small playground** for agentic workflows: runnable Jupyter notebooks, one **design pattern** at a time. Think of it as a set of **recipes** you can copy into bigger systems—not a framework, not a course website, just code plus enough explanation that future-you remembers *why* it’s shaped that way.
+
+Everything is tied together with **`uv`**, so you spend less time fighting Python environments and more time watching graphs and models do interesting things.
 
 ---
 
-## Project structure
+## What you’ll learn here
+
+By the time you’ve run the notebooks (in any order you like), you should be able to:
+
+- **Name** a few standard agentic patterns—evaluator loops, routing, orchestrator–worker, hierarchical handoffs—and **point to working code** for several of them.
+- **Read a LangGraph** sketch and tell whether the next step is **fixed** (edges) or **chosen at runtime** (`Command` / `goto`).
+- **Wire API keys** once in `.env` and reuse the same stack across notebooks.
+
+If a section feels dense, skip to **Hands-on notebooks** below, run something, then circle back. That’s a perfectly valid tutorial path.
+
+---
+
+## Map of the repo
 
 ```
 AgenticAIWorkflows/
 ├── src/
 │   ├── evaluatorOptimizerWorkflow/
-│   │   └── evaluator_optimizer_workflow.ipynb   # Cross-evaluation (Gemini + Ollama)
+│   │   └── evaluator_optimizer_workflow.ipynb   # Two models grade each other (Gemini + Ollama)
 │   ├── threeAgentDebateLangGraph/
-│   │   └── three_agent_debate.ipynb             # LangGraph routing + moderated debate
+│   │   └── three_agent_debate.ipynb             # LangGraph + moderator + debaters
 │   ├── orchastratorWorkerPattern/
-│   │   └── orchastrator_worker_pattern.ipynb    # Orchestrator + parallel workers + aggregator
+│   │   └── orchastrator_worker_pattern.ipynb    # Orchestrator → parallel writers → merge
 │   └── humanInTheLoop/
-│       └── human_in_the_loop.ipynb                # (placeholder / work in progress)
+│       └── human_in_the_loop.ipynb                # (sketch / WIP — poke at your own risk)
 ├── pyproject.toml
 ├── uv.lock
-├── .env                                          # Local secrets — not committed
-└── README.md                                     # This file — single source of workflow docs
+├── .env                                          # Your secrets — never commit this
+└── README.md                                     # You are here — the main “syllabus”
 ```
 
 ---
 
-## Setup (all workflows)
+## Before you run anything: setup
 
-1. **Install `uv`** (if needed):
+Treat this as **Lesson 0**. Once it works, every notebook is just “open and Run All (mindfully).”
 
-   ```bash
-   pip install uv
-   ```
+### 1. Install `uv` (one-time)
 
-2. **Install project dependencies** from the repo root:
+```bash
+pip install uv
+```
 
-   ```bash
-   uv sync
-   ```
+### 2. Install dependencies from the repo root
 
-3. **Environment variables**  
-   Create a `.env` file in the **project root** (copy from `.env.example` if present). Typical keys:
+```bash
+uv sync
+```
 
-   | Variable | Used by | Purpose |
-   |----------|---------|---------|
-   | `GEMINI_API_KEY` | Debate notebook, orchestrator–worker notebook, optional for Gemini in evaluator | Google AI Studio API key |
-   | `GEMINI_MODEL` | Debate notebook, orchestrator–worker notebook | Model id (e.g. `gemini-2.0-flash`); `models/` prefix is normalized in code where needed |
-   | `SERPER_API_KEY` | Orchestrator–worker notebook | [Serper.dev](https://serper.dev) key for `GoogleSerperAPIWrapper` search tool |
-   | `GEMINI_BASE_URL` | Evaluator notebook (OpenAI-compatible Gemini) | Default points at Google’s OpenAI-compatible endpoint |
-   | `OLLAMA_MODEL` | Evaluator notebook | Local model name (e.g. `llama3.2`) |
+### 3. Teach the project your API keys
 
-4. **Run notebooks** from the repo root:
+Create a **`.env`** file in the **project root** (copy `.env.example` if the repo has one). Here’s what usually matters:
 
-   ```bash
-   uv run jupyter lab
-   ```
+| Variable | Shows up in | What it’s for |
+|----------|-------------|----------------|
+| `GEMINI_API_KEY` | Debate, orchestrator–worker; optional Gemini path in evaluator | [Google AI Studio](https://aistudio.google.com/) key |
+| `GEMINI_MODEL` | Debate, orchestrator–worker | Model id (e.g. `gemini-2.0-flash`); notebooks strip a leading `models/` if you paste the full id |
+| `SERPER_API_KEY` | Orchestrator–worker | [Serper.dev](https://serper.dev) — powers `GoogleSerperAPIWrapper` search |
+| `GEMINI_BASE_URL` | Evaluator notebook | OpenAI-compatible Gemini endpoint (notebook has a sensible default) |
+| `OLLAMA_MODEL` | Evaluator notebook | Local model name, e.g. `llama3.2` |
 
-   or
+### 4. Launch Jupyter from the root
 
-   ```bash
-   uv run jupyter notebook
-   ```
+```bash
+uv run jupyter lab
+```
 
-### Extra steps for the evaluator workflow (Ollama)
+or
 
-Some cells call **Ollama** locally:
+```bash
+uv run jupyter notebook
+```
+
+### Side quest: evaluator + Ollama
+
+The evaluator notebook expects **Ollama** on your machine:
 
 ```bash
 ollama serve
 ollama pull llama3.2
 ```
 
-Use the same model name as `OLLAMA_MODEL` in `.env`.
+Match the pulled name to **`OLLAMA_MODEL`** in `.env`.
 
 ---
 
-## Workflow design patterns
+## Pattern primer (the vocabulary)
 
-These names match common “agentic workflow” language (see e.g. Anthropic’s *Building effective agents* and similar overviews). Your implementations map to them like this:
+These names line up with how people talk about agents in the wild (for example Anthropic’s [*Building effective agents*](https://www.anthropic.com/engineering/building-effective-agents) and similar writeups). Use this section as a **glossary** while you read the code.
 
 ### Evaluator–optimizer (and cross-evaluation)
 
-**Idea:** One component **produces** a candidate (answer, plan, code), and another **scores or critiques** it against rubrics or goals. Tight loops pair generator + evaluator until quality is good enough.
+**The picture in your head:** Model A drafts; Model B judges. Rinse and repeat until quality is good—or until you stop iterating.
 
-**This repo — evaluator notebook:** It uses a **symmetric cross-evaluation** shape instead of a single optimizing loop:
+**Twist in this repo:** The evaluator notebook is a **symmetric cross-evaluation**, not a single rewrite loop:
 
-1. Round A: Model A asks → Model B answers → Model A **evaluates** (numeric score + criteria).
-2. Round B: Model B asks → Model A answers → Model B **evaluates** the same way.
+1. **Round A:** Gemini asks → Ollama answers → Gemini **scores** (0–100 + rubric).
+2. **Round B:** Ollama asks → Gemini answers → Ollama **scores** the same way.
 
-So the pattern is still **evaluate-then-score**, but the goal is **comparison and benchmarking** between two stacks (here **Gemini** vs **Ollama**), not iteratively rewriting one artifact until an evaluator says “good.”
+So you still get **evaluate-then-score**, but the *point* is **comparison**: two stacks (cloud Gemini vs local Ollama) under the same grading lens.
 
-**When to use:** A/B evaluation, calibration of prompts, or when you want two systems to stress-test each other with shared grading rubrics.
-
----
-
-### Routing (dynamic next-step selection)
-
-**Idea:** The workflow **chooses which node or tool runs next** based on state, rules, or model output—instead of a single fixed sequence.
-
-**Kinds of routing:**
-
-| Style | What it looks like |
-|-------|-------------------|
-| **Rule / DSL routing** | `if state["step"] == "x": go to y` |
-| **LLM routing** | Parse model JSON or tool call to pick the next agent or sub-graph |
-| **Graph-native routing** | Framework returns an explicit **next node** from a node’s return value |
-
-**This repo — three-agent debate:** Uses **LangGraph** [**`Command`**](https://langchain-ai.github.io/langgraph/) routing from inside nodes:
-
-- Each debater and the moderator returns `Command(goto=<next_node>, update=<partial_state>)`.
-- Only **`START → coin_toss`** is a static `add_edge`; the rest of the traversal is **dynamic** (`goto` targets: `for_agent`, `against_agent`, `moderator`, or graph **`END`**).
-
-That is the **routing pattern** in graph form: the moderator (and opening-round debaters) **decide the edge** that executes next by returning `goto`, merged with partial state updates.
-
-**When to use:** Multi-agent turns, debate loops, “human or model decides next step,” or any workflow where the path is not known at compile time.
+**Reach for this when** you’re calibrating prompts, running A/B checks, or you want two systems to **stress-test** each other with a shared rubric.
 
 ---
 
-### Orchestrator–worker (fan-out, parallel specialists, fan-in)
+### Routing (who goes next?)
 
-**Idea:** A central **orchestrator** handles intake (and optionally tools such as search), then **fans out** work to **workers** that run in **parallel**—each with its own prompt or specialty. A final **aggregator** (or summarizer) **fans in** partial results into one deliverable.
+**The picture:** The workflow doesn’t always march A → B → C. Something—rules, another model, a human—**picks the next step**.
 
-**This repo — orchestrator–worker notebook:** Uses **LangGraph** `StateGraph` with one orchestrator node, **three parallel writer** nodes (summary, body, conclusion), and an **aggregator** node that merges sections into `final_report`. The orchestrator binds **Google Serper** as a tool for research-style calls.
+**Flavors:**
 
-**Contrast with routing:** The graph’s **shape** is mostly fixed (static edges); parallelism comes from **multiple edges** leaving the orchestrator, not from dynamic `goto` at each step.
+| Style | Mental model |
+|-------|----------------|
+| **Rule / DSL** | `if state["step"] == "x": go to y` |
+| **LLM routing** | Parse JSON or a tool call: “next = researcher” |
+| **Graph-native** | The node’s return value literally says **next node** |
 
-**When to use:** Independent subtasks (different sections, modalities, or domains), faster wall-clock time when workers do not depend on each other, and when you want to tune or swap **one** specialist without touching the whole pipeline.
+**In this repo — debate notebook:** LangGraph [**`Command`**](https://langchain-ai.github.io/langgraph/) does the heavy lifting. Debaters and the moderator return `Command(goto=<next>, update=<partial_state>)`. Only **`START → coin_toss`** is a boring static edge; after that, the path is **dynamic**.
+
+**Reach for this when** turns matter: debates, support bots that escalate, or any time “what happens next” shouldn’t be hard-coded.
 
 ---
 
-### Hierarchical decomposition (delegate, wait, continue)
+### Orchestrator–worker (split the work, merge the glory)
 
-**Idea:** Some goals are too large or too tool-heavy for a single agent context window—or you want a clean separation of concerns. A **parent** agent **breaks** the work into sub-tasks, **delegates** them to **children** (other agents, sub-graphs, or wrapped tool chains), **waits** for bounded results, then **resumes** its own reasoning with those results in context. The parent keeps the overarching thread (for example outline, voice, and final integration) while specialists own narrow slices (for example retrieval and condensation).
+**The picture:** One node **coordinates** (maybe with tools like search). Then **several specialists** work **at the same time**. Finally something **stitches** the pieces into one answer.
 
-**Contrast with routing:** **Routing** is mainly about **which branch or node runs next** from a set of alternatives. **Hierarchical decomposition** is about **depth**: the parent may hand off **only part** of the task, **synchronize** on the child’s output, and **continue** planning or writing—rather than treating the child as one of several equal “next steps” in a flat graph.
+**In this repo — orchestrator notebook:** A `StateGraph` with an orchestrator, **three parallel writers** (summary / body / conclusion), and an **aggregator** that builds `final_report`. Serper gives the orchestrator a search tool.
 
-**Example (conceptual):** A **`ReportWriter`** does not run web queries itself. It delegates research to a **`ResearchAssistant`**, which orchestrates **`WebSearch`** and **`Summarizer`** (as tools or thin sub-agents), then returns structured notes or citations. The **`ReportWriter`** folds that material into sections, adjusts tone, and finishes the document.
+**Not the same as routing:** The **shape** of the graph is mostly fixed. You’re not constantly re-deciding *which* node exists—you’re **fanning out** and **fanning in**.
+
+**Reach for this when** subtasks are **independent**, you want **shorter wall-clock** time, or you want to swap **one** specialist’s prompt/model without rewiring everything else.
+
+---
+
+### Hierarchical decomposition (parent delegates, child delivers)
+
+**The picture:** The job is too big for one context, or you want strict separation (e.g. only the researcher hits the web). A **parent** breaks work into chunks, **waits** for children, then **continues** with their outputs in mind.
+
+**Vs routing:** Routing is **which branch next**. Hierarchy is **depth**: hand off a *slice* of work, sync, compose—not pick among peers in a flat graph.
+
+**Example (conceptual):** `ReportWriter` asks `ResearchAssistant` for notes; the assistant uses `WebSearch` + `Summarizer`; the writer folds results into prose.
 
 ```mermaid
 flowchart TD
@@ -151,57 +163,54 @@ flowchart TD
     RW --> RW2[Continue: draft using<br/>returned research]
 ```
 
-On **GitHub**, this Mermaid block renders like the debate diagram above.
+On **GitHub**, Mermaid renders in the Markdown preview.
 
-**When to use:** Long reports or specs where research and writing should stay separate, different token budgets or models per sub-task, governance (only the researcher touches the network), or any workflow where the parent must **compose** child outputs rather than only **pick** the next hop.
-
----
-
-## Workflows
-
-### 1. Evaluator optimizer (`evaluator_optimizer_workflow.ipynb`)
-
-| | |
-|---|---|
-| **Notebook** | [`src/evaluatorOptimizerWorkflow/evaluator_optimizer_workflow.ipynb`](src/evaluatorOptimizerWorkflow/evaluator_optimizer_workflow.ipynb) |
-| **Pattern** | Cross-evaluation / evaluator–optimizer-style **scoring** (symmetric two-round design) |
-
-**Round 1:** Gemini → question → Ollama → answer → Gemini → score (0–100).  
-**Round 2:** Ollama → question → Gemini → answer → Ollama → score (0–100).
-
-**Shared rubric (example dimensions):** accuracy, completeness, clarity, depth, relevance — see the notebook’s `GRADING_CRITERIA`.
-
-**Stack notes:**
-
-- Gemini is used through an **OpenAI-compatible client** (`GEMINI_BASE_URL`, `GEMINI_API_KEY` in `.env` as configured in the notebook).
-- Ensure **Ollama** is running for the local half of the exercise.
+**Reach for this when** reports are long, budgets differ per role, or compliance says “only this agent gets network access.”
 
 ---
 
-### 2. Three-agent debate — LangGraph routing (`three_agent_debate.ipynb`)
+## Hands-on notebooks
+
+Suggested **first run** if you’re undecided: start with whichever pattern you’re most curious about—they don’t depend on each other.
+
+### Lab 1 — Evaluator optimizer (`evaluator_optimizer_workflow.ipynb`)
 
 | | |
 |---|---|
-| **Notebook** | [`src/threeAgentDebateLangGraph/three_agent_debate.ipynb`](src/threeAgentDebateLangGraph/three_agent_debate.ipynb) |
-| **Pattern** | **Routing** via `Command`; moderated multi-agent loop |
+| **Open** | [`src/evaluatorOptimizerWorkflow/evaluator_optimizer_workflow.ipynb`](src/evaluatorOptimizerWorkflow/evaluator_optimizer_workflow.ipynb) |
+| **You’ll see** | Cross-evaluation / evaluator-style **scoring** in a symmetric two-round design |
 
-**Routing in this graph**
+**Play-by-play**
 
-- **`coin_toss`**, **`for_agent`**, **`against_agent`**, and **`moderator`** each return **`Command(goto=..., update=...)`** so LangGraph knows the **next node** and **state delta** in one step.
-- **`moderator`** uses structured output (`ModeratorResponse`) to choose **`for_agent`**, **`against_agent`**, or **end** (`END`). A cap (`MAX_MODERATOR_CALLS`) can force termination; **`FinalVerdictResponse`** then supplies **`for_agent` / `against_agent` / `tie`** so the run does not end **`undecided`** when the cap bites.
+- **Round 1:** Gemini → question → Ollama → answer → Gemini → score (0–100).
+- **Round 2:** Ollama → question → Gemini → answer → Ollama → score (0–100).
 
-**Other design choices**
+**Rubric:** The notebook’s `GRADING_CRITERIA` spells out dimensions like accuracy, completeness, clarity, depth, relevance—tweak them and watch scores move.
 
-- **`TypedDict`** state + **`Annotated[list[str], add]`** to append debate turns cleanly.
-- **Coin toss** + mandatory **both openings** before first moderation (reduces first-speaker anchoring).
-- **Rebuttals** after openings (each side sees the opponent’s latest reply in context).
-- At least **one moderator follow-up** before the first normal **end**.
+**Stack:** Gemini via an **OpenAI-compatible** client (`GEMINI_BASE_URL`, `GEMINI_API_KEY`). **Ollama** must be up for the local half.
 
-**Env:** `GEMINI_API_KEY`, and optionally `GEMINI_MODEL` (see notebook Step 1 — native `google_genai` init).
+---
 
-#### Debate graph (conceptual)
+### Lab 2 — Three-agent debate (`three_agent_debate.ipynb`)
 
-Static edge: `START → coin_toss`. Other arrows correspond to **`goto`** targets from **`Command`**.
+| | |
+|---|---|
+| **Open** | [`src/threeAgentDebateLangGraph/three_agent_debate.ipynb`](src/threeAgentDebateLangGraph/three_agent_debate.ipynb) |
+| **You’ll see** | **Routing** with `Command`; a moderator plus two debaters |
+
+**What to notice**
+
+- **`coin_toss`**, **`for_agent`**, **`against_agent`**, **`moderator`** all return **`Command(goto=..., update=...)`** so LangGraph gets **next node + state patch** in one shot.
+- **`moderator`** uses structured output (`ModeratorResponse`). **`MAX_MODERATOR_CALLS`** can force an end; then **`FinalVerdictResponse`** picks **`for_agent` / `against_agent` / `tie`** so you don’t limp off as **`undecided`**.
+- **TypedDict** + **`Annotated[list[str], add]`** keeps transcript history tidy.
+- **Coin toss** + **both openings** before the first moderation (fights first-speaker bias).
+- **Rebuttals** use the opponent’s latest line; at least **one moderator follow-up** before a normal **end**.
+
+**Env:** `GEMINI_API_KEY`, optional `GEMINI_MODEL` (notebook Step 1 uses native `google_genai`).
+
+#### Debate graph (for drawing on a whiteboard)
+
+Only `START → coin_toss` is a fixed `add_edge`. Everything else mirrors **`goto`** from **`Command`**.
 
 ```mermaid
 flowchart TD
@@ -221,38 +230,35 @@ flowchart TD
     moderator -->|"goto END"| E([END])
 ```
 
-On **GitHub**, this Mermaid block renders in the Markdown view. In the editor, use a preview that supports Mermaid.
-
 ---
 
-### 3. Orchestrator–worker — LangGraph parallel workers (`orchastrator_worker_pattern.ipynb`)
+### Lab 3 — Orchestrator–worker (`orchastrator_worker_pattern.ipynb`)
 
 | | |
 |---|---|
-| **Notebook** | [`src/orchastratorWorkerPattern/orchastrator_worker_pattern.ipynb`](src/orchastratorWorkerPattern/orchastrator_worker_pattern.ipynb) |
-| **Pattern** | **Orchestrator–worker** — fan-out to parallel specialists, fan-in aggregation |
+| **Open** | [`src/orchastratorWorkerPattern/orchastrator_worker_pattern.ipynb`](src/orchastratorWorkerPattern/orchastrator_worker_pattern.ipynb) |
+| **You’ll see** | **Fan-out / fan-in**: one orchestrator, parallel specialists, one merger |
 
-**Flow**
+**Play-by-play**
 
-1. **`research_assistant_agent`** — researches the topic with an LLM that can call **Serper** search.
-2. **`research_report_summary_writer`**, **`research_report_body_writer`**, **`research_report_conclusion_writer`** — three workers run **in parallel** (separate prompts).
-3. **`research_report_aggregator`** — concatenates title, summary, body, and conclusion into **`final_report`**.
+1. **`research_assistant_agent`** — LLM + **Serper** tool for research-flavored turns.
+2. **Three writers** — summary, body, conclusion — run **in parallel** (different system prompts).
+3. **`research_report_aggregator`** — glues everything into **`final_report`**.
 
-**Stack notes**
-
-- **`init_chat_model`** with **`google_genai`** (same env style as the debate notebook).
-- **`GoogleSerperAPIWrapper`** requires **`SERPER_API_KEY`** in `.env`.
+**Stack:** `init_chat_model` + `google_genai` (same vibe as the debate notebook). **`SERPER_API_KEY`** unlocks search.
 
 ---
 
-## Dependencies
+## Dependencies (the boring-but-important bit)
 
-Shared libraries live in the root **`pyproject.toml`** and **`uv.lock`**. Add new packages there so every workflow stays on one toolchain.
+Shared packages live in **`pyproject.toml`** and **`uv.lock`**. When you add a dependency for a new notebook, add it **there** so everyone (including you, next month) stays on one toolchain.
 
 ---
 
-## Adding a new workflow
+## Adding your own notebook
 
-1. Create a folder under `src/` and add your notebook(s).
-2. Extend the **Project structure** and **Workflows** sections in **this** `README.md` (avoid per-folder READMEs unless a workflow needs a very long standalone doc).
-3. Say which **design pattern** it demonstrates (routing, evaluator–optimizer, orchestration, human-in-the-loop, etc.) so the catalog stays teachable.
+1. Drop a folder under **`src/`** and add the `.ipynb`.
+2. Update **Map of the repo** and **Hands-on notebooks** in this file (one README beats scattered docs unless something is huge).
+3. Say which **pattern** you’re teaching so the catalog stays honest.
+
+Happy experimenting.
