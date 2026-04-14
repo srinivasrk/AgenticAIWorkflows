@@ -15,6 +15,7 @@ Everything is tied together with **`uv`**, so you spend less time fighting Pytho
 | ⚖️ | ![Evaluator](https://img.shields.io/badge/Evaluator–optimizer-cross--check%20%26%20score-E74C3C?style=flat-square) | Two roles: **produce** vs **judge** (here: symmetric **A grades B, B grades A**) | **Lab 1** — evaluator notebook |
 | 🔀 | ![Routing](https://img.shields.io/badge/Routing-dynamic%20next%20step-6C5CE7?style=flat-square) | The path **isn’t** fixed; something picks **what runs next** | **Lab 2** — debate + `Command` |
 | 🎭 | ![Orchestrator](https://img.shields.io/badge/Orchestrator–worker-parallel%20then%20merge-00B894?style=flat-square) | One **coordinator**, many **workers** at once, then **one** merge | **Lab 3** — orchestrator notebook |
+| ✋ | ![Human in the loop](https://img.shields.io/badge/Human--in--the--loop-pause%20%26%20resume-FD7E14?style=flat-square) | **Checkpoint** + **`interrupt()`**; human approves or edits, then **`Command(resume=...)`** | **Lab 4** — human-in-the-loop notebook |
 | 🌳 | ![Hierarchy](https://img.shields.io/badge/Hierarchical%20decomposition-concept-0984E3?style=flat-square) | **Parent** hands a **slice** of work to a **child**, waits, **continues** | *Concept* (see primer + Mermaid below) |
 
 <details>
@@ -23,6 +24,7 @@ Everything is tied together with **`uv`**, so you spend less time fighting Pytho
 [![Evaluator–optimizer](https://img.shields.io/badge/Lab-Evaluator–optimizer-E74C3C?style=for-the-badge)](src/evaluatorOptimizerWorkflow/evaluator_optimizer_workflow.ipynb)  
 [![Routing](https://img.shields.io/badge/Lab-Debate%20%2B%20routing-6C5CE7?style=for-the-badge)](src/threeAgentDebateLangGraph/three_agent_debate.ipynb)  
 [![Orchestrator–worker](https://img.shields.io/badge/Lab-Orchestrator–worker-00B894?style=for-the-badge)](src/orchastratorWorkerPattern/orchastrator_worker_pattern.ipynb)  
+[![Human-in-the-loop](https://img.shields.io/badge/Lab-Human--in--the--loop-FD7E14?style=for-the-badge)](src/humanInTheLoop/human_in_the_loop.ipynb)  
 [![Hierarchical primer](https://img.shields.io/badge/Read-Hierarchical%20primer-0984E3?style=for-the-badge)](#hierarchical-decomposition-parent-delegates-child-delivers)
 
 </details>
@@ -33,8 +35,9 @@ Everything is tied together with **`uv`**, so you spend less time fighting Pytho
 
 By the time you’ve run the notebooks (in any order you like), you should be able to:
 
-- **Name** a few standard agentic patterns—evaluator loops, routing, orchestrator–worker, hierarchical handoffs—and **point to working code** for several of them.
+- **Name** a few standard agentic patterns—evaluator loops, routing, orchestrator–worker, human-in-the-loop pauses, hierarchical handoffs—and **point to working code** for several of them.
 - **Read a LangGraph** sketch and tell whether the next step is **fixed** (edges) or **chosen at runtime** (`Command` / `goto`).
+- **Use interrupts** where it matters: **`interrupt()`** in a tool, **`__interrupt__`** in the result, then **`Command(resume=...)`** on the **same `thread_id`** (see [LangGraph interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts)).
 - **Wire API keys** once in `.env` and reuse the same stack across notebooks.
 
 If a section feels dense, skip to **Hands-on notebooks** below, run something, then circle back. That’s a perfectly valid tutorial path.
@@ -53,7 +56,7 @@ AgenticAIWorkflows/
 │   ├── orchastratorWorkerPattern/
 │   │   └── orchastrator_worker_pattern.ipynb    # Orchestrator → parallel writers → merge
 │   └── humanInTheLoop/
-│       └── human_in_the_loop.ipynb                # (sketch / WIP — poke at your own risk)
+│       └── human_in_the_loop.ipynb              # Lab 4: StateGraph + ToolNode; interrupt() before send_email
 ├── pyproject.toml
 ├── uv.lock
 ├── .env                                          # Your secrets — never commit this
@@ -84,8 +87,8 @@ Create a **`.env`** file in the **project root** (copy `.env.example` if the rep
 
 | Variable | Shows up in | What it’s for |
 |----------|-------------|----------------|
-| `GEMINI_API_KEY` | Debate, orchestrator–worker; optional Gemini path in evaluator | [Google AI Studio](https://aistudio.google.com/) key |
-| `GEMINI_MODEL` | Debate, orchestrator–worker | Model id (e.g. `gemini-2.0-flash`); notebooks strip a leading `models/` if you paste the full id |
+| `GEMINI_API_KEY` | Debate, orchestrator–worker, human-in-the-loop; optional Gemini path in evaluator | [Google AI Studio](https://aistudio.google.com/) key |
+| `GEMINI_MODEL` | Debate, orchestrator–worker, human-in-the-loop | Model id (e.g. `gemini-2.0-flash`); notebooks strip a leading `models/` if you paste the full id |
 | `SERPER_API_KEY` | Orchestrator–worker | [Serper.dev](https://serper.dev) — powers `GoogleSerperAPIWrapper` search |
 | `GEMINI_BASE_URL` | Evaluator notebook | OpenAI-compatible Gemini endpoint (notebook has a sensible default) |
 | `OLLAMA_MODEL` | Evaluator notebook | Local model name, e.g. `llama3.2` |
@@ -175,6 +178,22 @@ So you still get **evaluate-then-score**, but the *point* is **comparison**: two
 **🆚 Not the same as routing:** The **shape** of the graph is mostly fixed. You’re not constantly re-deciding *which* node exists—you’re **fanning out** and **fanning in**.
 
 **✅ Reach for this when** subtasks are **independent**, you want **shorter wall-clock** time, or you want to swap **one** specialist’s prompt/model without rewiring everything else.
+
+---
+
+### ✋ Human-in-the-loop (pause, persist, resume)
+
+![pattern](https://img.shields.io/badge/Focus-approvals%20%26%20safety-FD7E14?style=for-the-badge)
+
+> **🔑 In one line:** *The graph **stops** at a dangerous step, **saves** state, and **waits** until a person (or service) supplies input—then **continues** with that input.*
+
+**The picture:** An agent calls tools freely for “safe” work (research, drafting). Before something irreversible—**sending email**, placing an order, deleting rows—the tool calls **`interrupt(...)`** with a JSON-serializable payload. Your UI or notebook reads **`__interrupt__`**, the human approves or edits, and you call **`invoke(Command(resume=...), config)`** with the **same `thread_id`** so the return value flows back into the tool.
+
+**In this repo — human-in-the-loop notebook:** An explicit **ReAct** graph (`StateGraph(MessagesState)` + **`ToolNode`** + **`tools_condition`**), same hand-rolled style as the debate notebook’s `StateGraph`, **not** the deprecated prebuilt ReAct factory. Gemini runs the **`agent`** node; **`send_email`** wraps approval in **`interrupt()`** per the official [Interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts) guide (including *Interrupts in tools*).
+
+**🆚 Vs static breakpoints:** `interrupt_before` / `interrupt_after` are great for **stepping through** a graph in development. For **production approvals**, prefer **`interrupt()`** so the pause is **conditional** and lives next to the business logic.
+
+**✅ Reach for this when** you need **auditability**, **legal sign-off**, or a **human veto** on high-impact tool calls.
 
 ---
 
@@ -300,6 +319,30 @@ flowchart TD
 
 ---
 
+### 🏅 Lab 4 — Human in the loop (`human_in_the_loop.ipynb`)
+
+[![Lab 4](https://img.shields.io/badge/Lab%204-Human--in--the--loop-FD7E14?style=for-the-badge)](src/humanInTheLoop/human_in_the_loop.ipynb)
+
+| | |
+|---|---|
+| **📂 Open** | [`src/humanInTheLoop/human_in_the_loop.ipynb`](src/humanInTheLoop/human_in_the_loop.ipynb) |
+| **🎯 Pattern** | ![Human in the loop](https://img.shields.io/badge/interrupt%28%29-Command%28resume%29-FD7E14?style=flat-square) **Approvals** before side effects |
+
+**Play-by-play**
+
+1. **`agent`** — Gemini with **`bind_tools`**: may call `research_topic`, `draft_email`, or `send_email`.
+2. **`tools`** — **`ToolNode`** runs tool calls; `send_email` hits **`interrupt({...})`** and execution pauses with **`__interrupt__`** in the invocation result.
+3. **Resume** — Same **`thread_id`**: **`invoke(Command(resume={"action": "approve", ...}), config)`** (or reject) so the tool finishes and the loop returns to **`agent`** for a final answer.
+
+**What to notice**
+
+- **`MemorySaver`** checkpointer is **required** for pause/resume; use a durable saver in production.
+- **Side effects** (real SMTP, etc.) should run **after** `interrupt()` returns approval, not before—see *Rules of interrupts* in the [same doc page](https://docs.langchain.com/oss/python/langgraph/interrupts).
+
+**🔐 Env:** `GEMINI_API_KEY`, optional `GEMINI_MODEL` (native `google_genai`, same Step 1 pattern as the debate and orchestrator notebooks).
+
+---
+
 ## 📦 Dependencies (the boring-but-important bit)
 
 Shared packages live in **`pyproject.toml`** and **`uv.lock`**. When you add a dependency for a new notebook, add it **there** so everyone (including you, next month) stays on one toolchain.
@@ -309,7 +352,7 @@ Shared packages live in **`pyproject.toml`** and **`uv.lock`**. When you add a d
 ## ➕ Adding your own notebook
 
 1. Drop a folder under **`src/`** and add the `.ipynb`.
-2. Update **Map of the repo** and **Hands-on notebooks** in this file (one README beats scattered docs unless something is huge).
+2. Update **Map of the repo**, **Hands-on notebooks**, and (if it’s a new pattern) the **cheat sheet** / **pattern primer** in this file (one README beats scattered docs unless something is huge).
 3. Say which **pattern** you’re teaching—bonus points for a matching badge in the cheat sheet.
 
 ---
